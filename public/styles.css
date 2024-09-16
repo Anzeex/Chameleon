@@ -1,0 +1,239 @@
+/* General Styles */
+body {
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    background-color: #2e2e2e; /* Dark Gray Background */
+    color: #ffffff; /* White Text */
+    margin: 0;
+    padding: 0;
+  }
+  
+  #game-container {
+    max-width: 800px;
+    margin: 50px auto;
+    padding: 20px;
+    background-color: #3a3a3a; /* Slightly Lighter Gray */
+    border-radius: 10px;
+    text-align: center;
+    box-shadow: 0 0 10px rgba(0, 0, 0, 0.7);
+  }
+  
+  h1, h2 {
+    font-weight: 600;
+    margin-bottom: 20px;
+    color: #ffffff;
+  }
+  
+  p {
+    font-size: 18px;
+    margin-bottom: 15px;
+  }
+  
+  input[type="text"], input[type="number"], select {
+    padding: 10px;
+    margin: 10px 0;
+    width: 80%;
+    max-width: 300px;
+    border: 1px solid #5a5a5a;
+    border-radius: 5px;
+    background-color: #4a4a4a;
+    color: #ffffff;
+    font-size: 16px;
+  }
+  
+  input[type="text"]::placeholder {
+    color: #cccccc;
+  }
+  
+  button {
+    padding: 12px 25px;
+    margin: 10px;
+    cursor: pointer;
+    border: none;
+    border-radius: 5px;
+    background-color: #6a6a6a;
+    color: #ffffff;
+    font-size: 16px;
+    transition: background-color 0.3s ease;
+  }
+  
+  button:hover {
+    background-color: #7a7a7a;
+  }
+  
+  button:disabled {
+    background-color: #5a5a5a;
+    cursor: not-allowed;
+  }
+  
+  .hidden {
+    display: none;
+  }
+  
+  ul {
+    list-style-type: none;
+    padding: 0;
+  }
+  
+  label {
+    font-size: 18px;
+    cursor: pointer;
+  }
+  
+  input[type="radio"] {
+    margin-right: 10px;
+  }
+  
+  .modal {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(46, 46, 46, 0.9);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+  }
+  
+  .modal-content {
+    background-color: #3a3a3a;
+    padding: 30px;
+    border-radius: 10px;
+    text-align: center;
+    width: 90%;
+    max-width: 400px;
+  }
+  
+  .modal.hidden {
+    display: none;
+  }
+  
+  /* Chat Styles */
+  #chat-screen {
+    text-align: left;
+    max-height: 300px;
+    overflow-y: auto;
+    margin-bottom: 20px;
+    border: 1px solid #5a5a5a;
+    padding: 10px;
+    background-color: #4a4a4a;
+  }
+  
+  #chat-messages p {
+    margin: 5px 0;
+    font-size: 16px;
+  }
+  
+  #chat-messages .system-message {
+    font-weight: bold;
+    color: #ffff99; /* Light yellow for system messages */
+  }
+  
+  #chat-messages .player-name {
+    font-weight: bold;
+  }
+  
+  #chat-input-area {
+    display: flex;
+    justify-content: center;
+    margin-bottom: 20px;
+  }
+  
+  #chat-input {
+    padding: 10px;
+    width: 70%;
+    max-width: 500px;
+    border: 1px solid #5a5a5a;
+    border-radius: 5px 0 0 5px;
+    background-color: #4a4a4a;
+    color: #ffffff;
+    font-size: 16px;
+  }
+  
+  #send-chat-btn {
+    padding: 10px 20px;
+    border: none;
+    border-radius: 0 5px 5px 0;
+    background-color: #6a6a6a;
+    color: #ffffff;
+    font-size: 16px;
+    cursor: pointer;
+  }
+  
+  #send-chat-btn:hover {
+    background-color: #7a7a7a;
+  }
+  
+  /* Voting Screen Styles */
+  #voting-list li {
+    margin: 10px 0;
+  }
+  
+  #voting-list label {
+    display: flex;
+    align-items: center;
+  }
+  
+  #voting-list input[type="radio"] {
+    margin-right: 10px;
+    transform: scale(1.2);
+  }
+  
+  /* Result Screen */
+  #result-screen h2 {
+    font-size: 32px;
+    margin-bottom: 20px;
+  }
+  
+  #result-display {
+    font-size: 24px;
+    margin-bottom: 30px;
+  }
+  
+  /* Additional Styles */
+  select {
+    padding: 10px;
+    width: 100%;
+    max-width: 300px;
+    border: 1px solid #5a5a5a;
+    border-radius: 5px;
+    background-color: #4a4a4a;
+    color: #ffffff;
+    font-size: 16px;
+  }
+  
+  select option {
+    background-color: #4a4a4a;
+    color: #ffffff;
+  }
+  
+  a {
+    color: #6a6a6a;
+    text-decoration: none;
+  }
+  
+  a:hover {
+    text-decoration: underline;
+  }
+  
+  @media (max-width: 600px) {
+    body {
+      font-size: 14px;
+    }
+  
+    button {
+      width: 100%;
+      max-width: 300px;
+    }
+  
+    #chat-input-area {
+      flex-direction: column;
+    }
+  
+    #chat-input, #send-chat-btn {
+      width: 100%;
+      border-radius: 5px;
+      margin-bottom: 10px;
+    }
+  }
+  
