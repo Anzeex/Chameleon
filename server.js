@@ -1,9 +1,9 @@
 // server.js
+
 const express = require('express');
 const http = require('http');
 const socketIo = require('socket.io');
-
-
+const sanitizeHtml = require('sanitize-html');
 
 // Create Express app and HTTP server
 const app = express();
@@ -27,19 +27,19 @@ io.on('connection', (socket) => {
       players: {},
       imposterId: null,
       secretWord: null,
-      clues: [],
       votes: {},
       gameStarted: false,
       currentRound: 1,
-      totalRounds: 3,
       clueOrder: [],
       currentClueIndex: 0,
+      impostorCanGuess: false,
+      canCallVote: false,
     };
     // Add the creating player to the lobby
     lobbies[lobbyCode].players[socket.id] = {
       id: socket.id,
       role: null,
-      clue: '',
+      clues: [],
       vote: null,
       nickname: '',
       ready: false,
@@ -55,7 +55,7 @@ io.on('connection', (socket) => {
       lobbies[lobbyCode].players[socket.id] = {
         id: socket.id,
         role: null,
-        clue: '',
+        clues: [],
         vote: null,
         nickname: '',
         ready: false,
@@ -72,17 +72,22 @@ io.on('connection', (socket) => {
   socket.on('playerReady', ({ lobbyCode, nickname }) => {
     const lobby = lobbies[lobbyCode];
     if (lobby) {
-      if (nickname.trim() === '') {
+      const sanitizedNickname = sanitizeHtml(nickname.trim());
+      if (sanitizedNickname === '') {
         socket.emit('error', 'Nickname cannot be empty.');
         return;
       }
-      lobby.players[socket.id].nickname = nickname;
+      if (sanitizedNickname.length > 15) {
+        socket.emit('error', 'Nickname cannot be longer than 15 characters.');
+        return;
+      }
+      lobby.players[socket.id].nickname = sanitizedNickname;
       lobby.players[socket.id].ready = true;
 
       // Check if all players are ready
       const allReady = Object.values(lobby.players).every(player => player.ready);
       if (allReady && Object.keys(lobby.players).length >= 3) {
-        startGame(lobbyCode);
+        assignRolesAndStart(lobbyCode);
       } else {
         io.to(lobbyCode).emit('playerReadyUpdate', {
           readyCount: Object.values(lobby.players).filter(player => player.ready).length,
@@ -100,11 +105,14 @@ io.on('connection', (socket) => {
     if (lobby) {
       const player = lobby.players[socket.id];
       if (player) {
+        const sanitizedClue = sanitizeHtml(clue.trim());
+        // Store the clue in the player's clues array
+        player.clues.push(sanitizedClue);
         // Broadcast the clue to all players
         io.to(lobbyCode).emit('clueSubmitted', {
           playerId: socket.id,
           nickname: player.nickname,
-          clue: clue,
+          clue: sanitizedClue,
         });
         // Move to next player
         lobby.currentClueIndex++;
@@ -137,12 +145,80 @@ io.on('connection', (socket) => {
     if (lobby) {
       const player = lobby.players[socket.id];
       if (player) {
+        const sanitizedMessage = sanitizeHtml(message.trim());
         io.to(lobbyCode).emit('receiveChatMessage', {
           playerId: socket.id,
           nickname: player.nickname,
-          message: message,
+          message: sanitizedMessage,
         });
       }
+    }
+  });
+
+  // Handle impostor guessing the word
+  socket.on('impostorGuessWord', ({ lobbyCode, guess }) => {
+    const lobby = lobbies[lobbyCode];
+    if (lobby) {
+      if (socket.id === lobby.imposterId) {
+        if (!lobby.impostorCanGuess) {
+          socket.emit('error', 'You cannot guess at this time. Please wait for the next round.');
+          return;
+        }
+        const sanitizedGuess = sanitizeHtml(guess.trim());
+        // Notify all players in the chat that the impostor has made a guess
+        io.to(lobbyCode).emit('receiveChatMessage', {
+          playerId: socket.id,
+          nickname: lobby.players[socket.id].nickname,
+          message: `I am guessing the secret word is "${sanitizedGuess}"`,
+          type: 'system',
+        });
+        if (sanitizedGuess.toLowerCase() === lobby.secretWord.toLowerCase()) {
+          // Impostor wins
+          io.to(lobbyCode).emit('gameEnded', {
+            result: `Impostor wins by correctly guessing the word! The secret word was "${lobby.secretWord}".`,
+            imposterId: lobby.imposterId,
+          });
+          // Clean up the lobby
+          delete lobbies[lobbyCode];
+        } else {
+          // Notify the impostor that the guess was incorrect
+          io.to(socket.id).emit('incorrectGuess', 'Incorrect guess. Keep trying!');
+          // Impostor cannot guess again until the next round
+          lobby.impostorCanGuess = false;
+          // Update the guess button state
+          io.to(lobby.imposterId).emit('updateGuessButton', false);
+        }
+      } else {
+        socket.emit('error', 'Only the impostor can guess the secret word.');
+      }
+    } else {
+      socket.emit('error', 'Lobby not found.');
+    }
+  });
+
+  // Handle calling for a vote
+  socket.on('callForVote', (lobbyCode) => {
+    const lobby = lobbies[lobbyCode];
+    if (lobby) {
+      if (!lobby.canCallVote) {
+        socket.emit('error', 'You cannot call for a vote at this time. Please wait for the next round.');
+        return;
+      }
+      // Notify all players in the chat that a vote has been called
+      io.to(lobbyCode).emit('receiveChatMessage', {
+        playerId: socket.id,
+        nickname: lobby.players[socket.id].nickname,
+        message: `${lobby.players[socket.id].nickname} has called for a vote!`,
+        type: 'system',
+      });
+      // Proceed to voting
+      io.to(lobbyCode).emit('votingInitiated');
+      // Players cannot call for vote again until the next round
+      lobby.canCallVote = false;
+      // Update the vote button state
+      io.to(lobbyCode).emit('updateVoteButton', false);
+    } else {
+      socket.emit('error', 'Lobby not found.');
     }
   });
 
@@ -153,10 +229,20 @@ io.on('connection', (socket) => {
     for (let lobbyCode in lobbies) {
       const lobby = lobbies[lobbyCode];
       if (lobby.players[socket.id]) {
+        const wasGameStarted = lobby.gameStarted;
         delete lobby.players[socket.id];
         io.to(lobbyCode).emit('playerLeft', Object.keys(lobby.players).length);
-        // If no players left, delete the lobby
-        if (Object.keys(lobby.players).length === 0) {
+        // If game has started and player count drops below 3
+        if (wasGameStarted && Object.keys(lobby.players).length < 3) {
+          // Impostor wins
+          io.to(lobbyCode).emit('gameEnded', {
+            result: `Impostor wins due to insufficient players.`,
+            imposterId: lobby.imposterId,
+          });
+          // Clean up the lobby
+          delete lobbies[lobbyCode];
+        } else if (Object.keys(lobby.players).length === 0) {
+          // If no players left, delete the lobby
           delete lobbies[lobbyCode];
         }
         break;
@@ -170,8 +256,8 @@ function generateLobbyCode() {
   return Math.random().toString(36).substr(2, 6).toUpperCase();
 }
 
-// Start the game
-function startGame(lobbyCode) {
+// Assign roles and start the game
+function assignRolesAndStart(lobbyCode) {
   const lobby = lobbies[lobbyCode];
   const playerIds = Object.keys(lobby.players);
   // Assign roles
@@ -180,28 +266,30 @@ function startGame(lobbyCode) {
   // Select the secret word from the chosen category
   lobby.secretWord = getRandomWord(lobby.category);
   lobby.currentRound = 1;
-  lobby.totalRounds = 3;
   lobby.clueOrder = playerIds;
   lobby.currentClueIndex = 0;
+
+  // Initialize game variables
+  lobby.gameStarted = true;
+  lobby.impostorCanGuess = false;
+  lobby.canCallVote = false; // Disable call vote at the start
 
   playerIds.forEach(playerId => {
     const player = lobby.players[playerId];
     if (playerId === lobby.imposterId) {
-      player.role = 'Imposter';
-      io.to(playerId).emit('roleAssigned', { role: 'Imposter' });
+      player.role = 'Impostor';
+      io.to(playerId).emit('roleAssigned', { role: 'Impostor' });
     } else {
       player.role = 'Player';
       io.to(playerId).emit('roleAssigned', { role: 'Player', secretWord: lobby.secretWord });
     }
   });
 
-  lobby.gameStarted = true;
-
-  // Notify all players that the game has started
+  // Emit gameStarted event
   io.to(lobbyCode).emit('gameStarted', {
     players: getPlayersInfo(lobby.players),
     currentRound: lobby.currentRound,
-    totalRounds: lobby.totalRounds,
+    category: lobby.category,
   });
 
   // Start the first clue submission
@@ -220,8 +308,6 @@ function getPlayersInfo(players) {
 }
 
 function startClueSubmission(lobbyCode) {
-  const lobby = lobbies[lobbyCode];
-  lobby.currentClueIndex = 0;
   promptNextPlayerForClue(lobbyCode);
 }
 
@@ -239,14 +325,18 @@ function promptNextPlayerForClue(lobbyCode) {
     io.to(currentPlayerId).emit('promptClueSubmission');
   } else {
     // All players have submitted clues for this round
-    lobby.currentRound++;
-    if (lobby.currentRound <= lobby.totalRounds) {
-      // Start the next round
-      startClueSubmission(lobbyCode);
-    } else {
-      // Proceed to voting
-      io.to(lobbyCode).emit('allRoundsCompleted');
-    }
+    lobby.currentClueIndex = 0; // Reset for next round
+
+    // Enable impostor to guess
+    lobby.impostorCanGuess = true;
+    io.to(lobby.imposterId).emit('updateGuessButton', true);
+
+    // Allow players to call for a vote
+    lobby.canCallVote = true;
+    io.to(lobbyCode).emit('updateVoteButton', true);
+
+    // Note: The game now waits for players to interact (call vote or impostor to guess)
+    // Proceed to next round or continue based on game logic
   }
 }
 
@@ -254,30 +344,79 @@ function promptNextPlayerForClue(lobbyCode) {
 function determineWinner(lobbyCode) {
   const lobby = lobbies[lobbyCode];
   const voteCounts = {};
+  let skipVotes = 0;
+
   for (let voterId in lobby.votes) {
     const votedId = lobby.votes[voterId];
-    voteCounts[votedId] = (voteCounts[votedId] || 0) + 1;
+    if (votedId === 'skip') {
+      skipVotes++;
+    } else {
+      voteCounts[votedId] = (voteCounts[votedId] || 0) + 1;
+    }
   }
-  // Find the player with the most votes
+
+  // If majority of players choose to skip, no one is voted out
+  if (skipVotes > Object.keys(lobby.players).length / 2) {
+    io.to(lobbyCode).emit('receiveChatMessage', {
+      message: 'The majority chose to skip the vote.',
+      type: 'system',
+    });
+    // Clear votes for the next voting session
+    lobby.votes = {};
+    // Reset buttons and proceed to next round
+    lobby.currentRound++;
+    lobby.impostorCanGuess = false;
+    lobby.canCallVote = false;
+    io.to(lobby.imposterId).emit('updateGuessButton', false);
+    io.to(lobbyCode).emit('updateVoteButton', false);
+    startClueSubmission(lobbyCode);
+    return;
+  }
+
+  // Find the player(s) with the highest votes
   let maxVotes = 0;
-  let playerVotedOut = null;
   for (let playerId in voteCounts) {
     if (voteCounts[playerId] > maxVotes) {
       maxVotes = voteCounts[playerId];
-      playerVotedOut = playerId;
     }
   }
+
+  // Check for ties among top-voted players
+  const topVotedPlayers = Object.keys(voteCounts).filter(
+    playerId => voteCounts[playerId] === maxVotes
+  );
+
+  if (topVotedPlayers.length > 1) {
+    // There's a tie
+    io.to(lobbyCode).emit('receiveChatMessage', {
+      message: 'There was a tie in the vote. No one was eliminated.',
+      type: 'system',
+    });
+    // Clear votes for the next voting session
+    lobby.votes = {};
+    // Reset buttons and proceed to next round
+    lobby.currentRound++;
+    lobby.impostorCanGuess = false;
+    lobby.canCallVote = false;
+    io.to(lobby.imposterId).emit('updateGuessButton', false);
+    io.to(lobbyCode).emit('updateVoteButton', false);
+    startClueSubmission(lobbyCode);
+    return;
+  }
+
+  const playerVotedOut = topVotedPlayers[0];
   const imposter = lobby.players[lobby.imposterId];
+
   if (playerVotedOut === lobby.imposterId) {
     // Players win
     io.to(lobbyCode).emit('gameEnded', {
-      result: `Players win! The imposter was ${imposter.nickname}.`,
+      result: `Players win! The Impostor was ${imposter.nickname}.`,
       imposterId: lobby.imposterId,
     });
   } else {
-    // Imposter wins
+    // Impostor wins
     io.to(lobbyCode).emit('gameEnded', {
-      result: `Imposter wins! The imposter was ${imposter.nickname}.`,
+      result: `Impostor wins! The Impostor was ${imposter.nickname}.`,
       imposterId: lobby.imposterId,
     });
   }
@@ -288,66 +427,265 @@ function determineWinner(lobbyCode) {
 // Get a random word from the selected category
 function getRandomWord(category) {
   const wordLists = {
-    'Video Games': [
-      'Mario',
-      'Zelda',
-      'Minecraft',
-      'Fortnite',
-      'Overwatch',
-      'Pokemon',
-      'Tetris',
-      'Halo',
-      'Sonic',
-      'Pac-Man',
-    ],
-    'Movies': [
-      'Titanic',
-      'Inception',
-      'Avatar',
-      'Gladiator',
-      'Jaws',
-      'Alien',
-      'Rocky',
-      'Amadeus',
-      'Frozen',
-      'Godfather',
-    ],
-    'Shows': [
-      'Friends',
-      'Breaking Bad',
-      'Sherlock',
-      'Stranger Things',
-      'Game of Thrones',
-      'The Office',
-      'Simpsons',
-      'Lost',
-      'House',
-      'Dexter',
-    ],
-    'Animals': [
-      'Elephant',
-      'Giraffe',
-      'Kangaroo',
-      'Dolphin',
-      'Panda',
-      'Penguin',
-      'Lion',
-      'Tiger',
-      'Zebra',
-      'Koala',
-    ],
-    'Foods': [
-      'Pizza',
-      'Sushi',
-      'Burger',
-      'Pasta',
-      'Taco',
-      'Salad',
-      'Chocolate',
-      'Ice Cream',
-      'Steak',
-      'Pancake',
-    ],
+    // ... (your word lists)
+'Video Games': [
+    'Mario',
+    'Zelda',
+    'Minecraft',
+    'Fortnite',
+    'Overwatch',
+    'Pokemon',
+    'Tetris',
+    'Halo',
+    'Sonic',
+    'Pac-Man',
+    'Call of Duty',
+    'League of Legends',
+    'World of Warcraft',
+    'Among Us',
+    'Assassin\'s Creed',
+    'Grand Theft Auto V',
+    'The Last of Us',
+    'Red Dead Redemption',
+    'Final Fantasy',
+    'Metal Gear Solid',
+    'Resident Evil',
+    'Street Fighter',
+    'Mortal Kombat',
+    'Half-Life',
+    'Portal',
+    'StarCraft',
+    'Diablo',
+    'Mass Effect',
+    'Elder Scrolls V: Skyrim',
+    'God of War',
+    'Uncharted',
+    'Animal Crossing',
+    'Fallout',
+    'Super Smash Bros.',
+    'Counter-Strike',
+    'Dota 2',
+    'Battlefield',
+    'Destiny',
+    'Borderlands',
+    'Kingdom Hearts',
+],
+
+'Movies': [
+    'Titanic',
+    'Inception',
+    'Avatar',
+    'Gladiator',
+    'Jaws',
+    'Alien',
+    'Rocky',
+    'Amadeus',
+    'Frozen',
+    'Godfather',
+    'Interstellar',
+    'The Matrix',
+    'Jurassic Park',
+    'The Avengers',
+    'Pulp Fiction',
+    'Star Wars',
+    'Forrest Gump',
+    'The Shawshank Redemption',
+    'The Dark Knight',
+    'Casablanca',
+    'Gone with the Wind',
+    'E.T. the Extra-Terrestrial',
+    'Back to the Future',
+    'The Lord of the Rings',
+    'The Silence of the Lambs',
+    'Schindler\'s List',
+    'Saving Private Ryan',
+    'The Lion King',
+    'Toy Story',
+    'Goodfellas',
+    'The Terminator',
+    'Blade Runner',
+    'Psycho',
+    'A Beautiful Mind',
+    'Braveheart',
+    'The Godfather Part II',
+    'Fight Club',
+    'The Truman Show',
+    'The Departed',
+    'Memento',
+],
+
+'Shows': [
+    'Friends',
+    'Breaking Bad',
+    'Sherlock',
+    'Stranger Things',
+    'Game of Thrones',
+    'The Office',
+    'Simpsons',
+    'Lost',
+    'House',
+    'Dexter',
+    'The Crown',
+    'Westworld',
+    'Mad Men',
+    'The Mandalorian',
+    'Chernobyl',
+    'The Walking Dead',
+    'Seinfeld',
+    'Grey\'s Anatomy',
+    'How I Met Your Mother',
+    'The Big Bang Theory',
+    'Black Mirror',
+    'The Sopranos',
+    'Better Call Saul',
+    'Ozark',
+    'Narcos',
+    'Vikings',
+    'Peaky Blinders',
+    'The Handmaid\'s Tale',
+    'Doctor Who',
+    'Arrested Development',
+    'Rick and Morty',
+    'Brooklyn Nine-Nine',
+    'The Wire',
+    'Suits',
+    'House of Cards',
+    'Modern Family',
+    'Parks and Recreation',
+    'Fargo',
+    'Homeland',
+    'The Witcher',
+],
+
+'Animals': [
+    'Elephant',
+    'Giraffe',
+    'Kangaroo',
+    'Dolphin',
+    'Panda',
+    'Penguin',
+    'Lion',
+    'Tiger',
+    'Zebra',
+    'Koala',
+    'Hippopotamus',
+    'Rhinoceros',
+    'Cheetah',
+    'Chimpanzee',
+    'Alligator',
+    'Bear',
+    'Wolf',
+    'Fox',
+    'Rabbit',
+    'Squirrel',
+    'Ostrich',
+    'Flamingo',
+    'Whale',
+    'Octopus',
+    'Eagle',
+    'Hawk',
+    'Parrot',
+    'Gorilla',
+    'Leopard',
+    'Crocodile',
+    'Bison',
+    'Buffalo',
+    'Camel',
+    'Deer',
+    'Horse',
+    'Moose',
+    'Antelope',
+    'Sloth',
+    'Hedgehog',
+    'Armadillo',
+],
+
+'Foods': [
+    'Pizza',
+    'Sushi',
+    'Burger',
+    'Pasta',
+    'Taco',
+    'Salad',
+    'Chocolate',
+    'Ice Cream',
+    'Steak',
+    'Pancake',
+    'Sandwich',
+    'Soup',
+    'Curry',
+    'Dumplings',
+    'Croissant',
+    'Fried Rice',
+    'Lasagna',
+    'Cheesecake',
+    'Hot Dog',
+    'Barbecue Ribs',
+    'Donut',
+    'Falafel',
+    'Paella',
+    'Kebab',
+    'Bagel',
+    'Nachos',
+    'Gnocchi',
+    'Quiche',
+    'Miso Soup',
+    'Tiramisu',
+    'Apple Pie',
+    'Grilled Cheese',
+    'Omelette',
+    'Burrito',
+    'Samosa',
+    'Sashimi',
+    'Crème Brûlée',
+    'Guacamole',
+    'Macaroni and Cheese',
+    'Poutine',
+],
+
+'Characters': [
+    'Sherlock Holmes',
+    'Harry Potter',
+    'Darth Vader',
+    'Winnie the Pooh',
+    'Spider-Man',
+    'Mickey Mouse',
+    'Batman',
+    'Mario',
+    'James Bond',
+    'Elsa',
+    'Wonder Woman',
+    'Hercules',
+    'Superman',
+    'Lara Croft',
+    'Frodo Baggins',
+    'Captain America',
+    'Iron Man',
+    'Luke Skywalker',
+    'Indiana Jones',
+    'Gandalf',
+    'Katniss Everdeen',
+    'Homer Simpson',
+    'Buzz Lightyear',
+    'Woody',
+    'Shrek',
+    'Donkey Kong',
+    'Princess Peach',
+    'SpongeBob SquarePants',
+    'Optimus Prime',
+    'Goku',
+    'Naruto',
+    'Jon Snow',
+    'Walter White',
+    'Yoda',
+    'Scooby-Doo',
+    'Rick Grimes',
+    'Tony Soprano',
+    'Michael Scott',
+    'Ellen Ripley',
+    'Jack Sparrow',
+],
+
   };
 
   let words = wordLists[category];

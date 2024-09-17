@@ -9,15 +9,35 @@
   <div id="game-container">
     <h1>Chameleon</h1>
 
-    <!-- Lobby Creation and Joining -->
-    <div id="lobby-screen">
+    <div id="main-menu">
       <button id="create-lobby-btn">Create Lobby</button>
       <p>OR</p>
       <input type="text" id="lobby-code-input" placeholder="Enter Lobby Code">
       <button id="join-lobby-btn">Join Lobby</button>
+      <br>
+      <button id="tutorial-btn">How to Play</button>
     </div>
 
-    <!-- Category Selection Modal -->
+    <div id="tutorial-modal" class="modal hidden">
+      <div class="modal-content">
+        <h1>
+          Welcome to Chameleon:
+        </h1>
+        <ul>
+          <li>One player is randomly assigned as the Chameleon.</li>
+          <br>
+          <li>The Chameleon does not know the secret word; other players do.</li>
+          <br>
+          <li>Players take turns giving clues related to the secret word.</li><br>
+          <li>The Chameleon tries to blend in without knowing the secret word.</li><br>
+          <li>Players can call for a vote once per round to identify the Chameleon.</li><br>
+          <li>If the Chameleon is caught, the players win. If not, the Chameleon wins.</li><br>
+          <li>The Chameleon can guess the secret word once per round to win instantly.</li>
+        </ul>
+        <button id="close-tutorial-btn">Close</button>
+      </div>
+    </div>
+
     <div id="category-selection-modal" class="modal hidden">
       <div class="modal-content">
         <h2>Select a Category</h2>
@@ -27,59 +47,70 @@
           <option value="Shows">Shows</option>
           <option value="Animals">Animals</option>
           <option value="Foods">Foods</option>
+          <option value="Characters">Characters</option>
         </select>
         <button id="confirm-category-btn">Confirm</button>
       </div>
     </div>
 
-    <!-- Waiting Room -->
     <div id="waiting-screen" class="hidden">
       <h2>Lobby Code: <span id="lobby-code-display"></span></h2>
-      <p id="selected-category"></p> <!-- Display selected category -->
+      <p id="selected-category"></p>
       <p>Players ready: <span id="player-count">0/0</span></p>
-      <input type="text" id="nickname-input" placeholder="Enter your nickname">
+      <input type="text" id="nickname-input" placeholder="Enter your nickname (max 15 characters)">
       <button id="ready-btn">Ready</button>
     </div>
 
-    <!-- Role Display -->
-    <div id="role-screen" class="hidden">
-      <h2>Your Role</h2>
-      <p id="role-display"></p>
-      <p id="secret-word-display"></p>
-    </div>
-
-    <!-- Clue Entry -->
     <div id="clue-screen" class="hidden">
       <h2>Enter Your Clue</h2>
       <input type="text" id="clue-input">
       <button id="submit-clue-btn">Submit Clue</button>
     </div>
 
-    <!-- Chat Display -->
     <div id="chat-screen" class="hidden">
       <h2>Chat</h2>
+      <h3 id="game-category"></h3>
       <div id="chat-messages"></div>
-      <!-- Chat Input -->
+
       <div id="chat-input-area">
         <input type="text" id="chat-input" placeholder="Type a message...">
         <button id="send-chat-btn">Send</button>
       </div>
+
+      <div id="game-buttons">
+        <button id="call-vote-btn">Call for Vote</button>
+        <button id="view-clues-btn">View Clues</button>
+        <button id="guess-word-btn" class="hidden">Guess Secret Word</button>
+      </div>
     </div>
 
-    <!-- Voting Screen -->
+    <div id="guess-word-modal" class="modal hidden">
+      <div class="modal-content">
+        <h2>Guess the Secret Word</h2>
+        <input type="text" id="impostor-guess-input" placeholder="Enter your guess">
+        <button id="submit-guess-btn">Submit Guess</button>
+      </div>
+    </div>
+
+    <div id="clues-modal" class="modal hidden">
+      <div class="modal-content">
+        <h2>Clues Per Player</h2>
+        <div id="clues-content"></div>
+        <button id="close-clues-btn">Close</button>
+      </div>
+    </div>
+
     <div id="voting-screen" class="hidden">
-      <h2>Vote for the Imposter</h2>
+      <h2>Vote for the Impostor</h2>
       <ul id="voting-list"></ul>
       <button id="submit-vote-btn">Submit Vote</button>
     </div>
 
-    <!-- Game Result -->
     <div id="result-screen" class="hidden">
       <h2>Game Result</h2>
       <p id="result-display"></p>
       <button id="play-again-btn">Play Again</button>
     </div>
-
   </div>
 
   <script src="/socket.io/socket.io.js"></script>
