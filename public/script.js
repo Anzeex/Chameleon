@@ -37,6 +37,7 @@ const gameCategoryDisplay = document.getElementById('game-category');
 const callVoteBtn = document.getElementById('call-vote-btn');
 const viewCluesBtn = document.getElementById('view-clues-btn');
 const guessWordBtn = document.getElementById('guess-word-btn');
+const proceedNextRoundBtn = document.getElementById('proceed-next-round-btn');
 
 const guessWordModal = document.getElementById('guess-word-modal');
 const impostorGuessInput = document.getElementById('impostor-guess-input');
@@ -51,6 +52,8 @@ const submitVoteBtn = document.getElementById('submit-vote-btn');
 
 const resultDisplay = document.getElementById('result-display');
 const playAgainBtn = document.getElementById('play-again-btn');
+
+const playerList = document.getElementById('player-list');
 
 let lobbyCode = '';
 let playerId = '';
@@ -108,6 +111,20 @@ submitClueBtn.addEventListener('click', () => {
   }
 });
 
+clueInput.addEventListener('keydown', (event) => {
+  if (event.key === 'Enter') {
+    event.preventDefault();
+    submitClueBtn.click();
+  }
+});
+
+chatInput.addEventListener('keydown', (event) => {
+  if (event.key === 'Enter') {
+    event.preventDefault();
+    sendChatBtn.click();
+  }
+});
+
 submitVoteBtn.addEventListener('click', () => {
   const selectedRadio = document.querySelector('input[name="vote"]:checked');
   if (selectedRadio) {
@@ -143,6 +160,11 @@ submitGuessBtn.addEventListener('click', () => {
 callVoteBtn.addEventListener('click', () => {
   socket.emit('callForVote', lobbyCode);
   callVoteBtn.disabled = true;
+});
+
+proceedNextRoundBtn.addEventListener('click', () => {
+  socket.emit('proceedToNextRound', lobbyCode);
+  proceedNextRoundBtn.disabled = true;
 });
 
 viewCluesBtn.addEventListener('click', () => {
@@ -205,14 +227,14 @@ socket.on('roleAssigned', ({ role: assignedRole, secretWord: assignedSecretWord 
   if (assignedRole === 'Player') {
     secretWord = assignedSecretWord;
   } else if (assignedRole === 'Impostor') {
-    secretWord = null; 
+    secretWord = null;
     guessWordBtn.classList.remove('hidden');
     guessWordBtn.disabled = true;
   }
 });
 
-socket.on('gameStarted', ({ players: serverPlayers, currentRound, totalRounds, category }) => {
-  players = serverPlayers; 
+socket.on('gameStarted', ({ players: serverPlayers, currentRound, category }) => {
+  players = serverPlayers;
   waitingScreen.classList.add('hidden');
   chatScreen.classList.remove('hidden');
 
@@ -223,6 +245,9 @@ socket.on('gameStarted', ({ players: serverPlayers, currentRound, totalRounds, c
   }
 
   callVoteBtn.disabled = true;
+  proceedNextRoundBtn.disabled = true;
+  addChatMessage(`Game started! Round ${currentRound}`, 'system');
+  updatePlayerList();
 });
 
 socket.on('promptClueSubmission', () => {
@@ -237,7 +262,7 @@ socket.on('playerSubmittingClue', ({ playerId: submittingPlayerId, nickname }) =
 });
 
 socket.on('clueSubmitted', ({ playerId, nickname, clue }) => {
-  addChatMessage(`${nickname}: ${clue}`, 'player');
+  addChatMessage(`${nickname}: ${clue}`, 'clue');
 
   if (!playerClues[playerId]) {
     playerClues[playerId] = {
@@ -268,6 +293,10 @@ socket.on('receiveChatMessage', ({ playerId, nickname, message, type }) => {
   }
 });
 
+socket.on('receivePrivateMessage', ({ fromNickname, message }) => {
+  addChatMessage(`${fromNickname}: ${message}`, 'private');
+});
+
 socket.on('incorrectGuess', (message) => {
   alert(message);
 });
@@ -296,6 +325,25 @@ socket.on('updateVoteButton', (canCallVote) => {
   }
 });
 
+socket.on('enableProceedButton', (canProceed) => {
+  proceedNextRoundBtn.disabled = !canProceed;
+});
+
+socket.on('newRoundStarted', ({ currentRound }) => {
+  addChatMessage(`Round ${currentRound} has started!`, 'system');
+  playerClues = {};
+  callVoteBtn.disabled = true;
+  proceedNextRoundBtn.disabled = true;
+  if (role === 'Impostor') {
+    guessWordBtn.disabled = true;
+  }
+});
+
+socket.on('updatePlayerList', (updatedPlayers) => {
+  players = updatedPlayers;
+  updatePlayerList();
+});
+
 function addChatMessage(message, type = 'normal') {
   const messageElement = document.createElement('p');
 
@@ -316,6 +364,34 @@ function addChatMessage(message, type = 'normal') {
       messageElement.appendChild(document.createTextNode(messageText));
     } else {
       messageElement.textContent = message;
+    }
+  } else if (type === 'clue') {
+    messageElement.classList.add('clue-message');
+    const colonIndex = message.indexOf(':');
+    if (colonIndex !== -1) {
+      const playerName = message.substring(0, colonIndex + 1);
+      const messageText = message.substring(colonIndex + 1);
+
+      const playerNameElement = document.createElement('span');
+      playerNameElement.classList.add('player-name');
+      playerNameElement.textContent = playerName;
+
+      messageElement.appendChild(playerNameElement);
+      messageElement.appendChild(document.createTextNode(messageText));
+    }
+  } else if (type === 'private') {
+    messageElement.classList.add('private-message');
+    const colonIndex = message.indexOf(':');
+    if (colonIndex !== -1) {
+      const playerName = message.substring(0, colonIndex + 1);
+      const messageText = message.substring(colonIndex + 1);
+
+      const playerNameElement = document.createElement('span');
+      playerNameElement.classList.add('player-name');
+      playerNameElement.textContent = playerName;
+
+      messageElement.appendChild(playerNameElement);
+      messageElement.appendChild(document.createTextNode(messageText));
     }
   } else {
     messageElement.textContent = message;
@@ -346,4 +422,14 @@ function populateVotingOptions() {
     </label>
   `;
   votingList.appendChild(skipLi);
+}
+
+function updatePlayerList() {
+  playerList.innerHTML = '';
+  for (let playerId in players) {
+    const player = players[playerId];
+    const li = document.createElement('li');
+    li.textContent = player.nickname;
+    playerList.appendChild(li);
+  }
 }
