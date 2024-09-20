@@ -1,5 +1,3 @@
-// server.js 
- 
 const express = require('express');
 const http = require('http');
 const socketIo = require('socket.io');
@@ -34,6 +32,7 @@ io.on('connection', (socket) => {
       currentClueIndex: 0,
       impostorCanGuess: false,
       canCallVote: false,
+      proceedToNextRoundVotes: {},
     };
     // Add the creating player to the lobby
     lobbies[lobbyCode].players[socket.id] = {
@@ -79,6 +78,12 @@ io.on('connection', (socket) => {
       }
       if (sanitizedNickname.length > 15) {
         socket.emit('error', 'Nickname cannot be longer than 15 characters.');
+        return;
+      }
+      // Check for duplicate nicknames
+      const duplicate = Object.values(lobby.players).some(player => player.nickname === sanitizedNickname);
+      if (duplicate) {
+        socket.emit('error', 'Nickname already taken. Please choose another one.');
         return;
       }
       lobby.players[socket.id].nickname = sanitizedNickname;
@@ -146,11 +151,41 @@ io.on('connection', (socket) => {
       const player = lobby.players[socket.id];
       if (player) {
         const sanitizedMessage = sanitizeHtml(message.trim());
-        io.to(lobbyCode).emit('receiveChatMessage', {
-          playerId: socket.id,
-          nickname: player.nickname,
-          message: sanitizedMessage,
-        });
+        // Check for private message command
+        if (sanitizedMessage.startsWith('/msg ')) {
+          const parts = sanitizedMessage.split(' ');
+          const recipientName = parts[1];
+          const privateMessage = parts.slice(2).join(' ');
+          // Find recipient by nickname
+          let recipientSocketId = null;
+          for (let playerId in lobby.players) {
+            if (lobby.players[playerId].nickname === recipientName) {
+              recipientSocketId = playerId;
+              break;
+            }
+          }
+          if (recipientSocketId) {
+            // Send private message to recipient
+            io.to(recipientSocketId).emit('receivePrivateMessage', {
+              fromNickname: player.nickname,
+              message: privateMessage,
+            });
+            // Notify the sender that the message was sent
+            socket.emit('receivePrivateMessage', {
+              fromNickname: `To ${recipientName}`,
+              message: privateMessage,
+            });
+          } else {
+            socket.emit('error', `Player with nickname "${recipientName}" not found.`);
+          }
+        } else {
+          // Broadcast to all players
+          io.to(lobbyCode).emit('receiveChatMessage', {
+            playerId: socket.id,
+            nickname: player.nickname,
+            message: sanitizedMessage,
+          });
+        }
       }
     }
   });
@@ -222,6 +257,35 @@ io.on('connection', (socket) => {
     }
   });
 
+  // Handle proceeding to next round
+  socket.on('proceedToNextRound', (lobbyCode) => {
+    const lobby = lobbies[lobbyCode];
+    if (lobby) {
+      lobby.proceedToNextRoundVotes[socket.id] = true;
+      const votesNeeded = Math.ceil(Object.keys(lobby.players).length / 2);
+      if (Object.keys(lobby.proceedToNextRoundVotes).length >= votesNeeded) {
+        // Proceed to next round
+        lobby.proceedToNextRoundVotes = {};
+        lobby.currentRound++;
+        lobby.votes = {};
+        lobby.impostorCanGuess = false;
+        lobby.canCallVote = false;
+        io.to(lobby.imposterId).emit('updateGuessButton', false);
+        io.to(lobbyCode).emit('updateVoteButton', false);
+        // Start new round
+        startNewRound(lobbyCode);
+      } else {
+        // Notify players of the number of votes
+        io.to(lobbyCode).emit('receiveChatMessage', {
+          message: `${Object.keys(lobby.proceedToNextRoundVotes).length}/${votesNeeded} players want to proceed to the next round.`,
+          type: 'system',
+        });
+      }
+    } else {
+      socket.emit('error', 'Lobby not found.');
+    }
+  });
+
   // Handle disconnection
   socket.on('disconnect', () => {
     console.log(`Client disconnected: ${socket.id}`);
@@ -232,11 +296,12 @@ io.on('connection', (socket) => {
         const wasGameStarted = lobby.gameStarted;
         delete lobby.players[socket.id];
         io.to(lobbyCode).emit('playerLeft', Object.keys(lobby.players).length);
+        io.to(lobbyCode).emit('updatePlayerList', getPlayersInfo(lobby.players));
         // If game has started and player count drops below 3
         if (wasGameStarted && Object.keys(lobby.players).length < 3) {
           // Impostor wins
           io.to(lobbyCode).emit('gameEnded', {
-            result: `Impostor wins due to insufficient players.`,
+            result: 'Impostor wins due to insufficient players.',
             imposterId: lobby.imposterId,
           });
           // Clean up the lobby
@@ -276,6 +341,7 @@ function assignRolesAndStart(lobbyCode) {
 
   playerIds.forEach(playerId => {
     const player = lobby.players[playerId];
+    player.clues = []; // Reset clues
     if (playerId === lobby.imposterId) {
       player.role = 'Impostor';
       io.to(playerId).emit('roleAssigned', { role: 'Impostor' });
@@ -302,6 +368,7 @@ function getPlayersInfo(players) {
     playersInfo[playerId] = {
       id: playerId,
       nickname: players[playerId].nickname,
+      role: players[playerId].role,
     };
   }
   return playersInfo;
@@ -335,8 +402,10 @@ function promptNextPlayerForClue(lobbyCode) {
     lobby.canCallVote = true;
     io.to(lobbyCode).emit('updateVoteButton', true);
 
-    // Note: The game now waits for players to interact (call vote or impostor to guess)
-    // Proceed to next round or continue based on game logic
+    // Enable proceed to next round button
+    io.to(lobbyCode).emit('enableProceedButton', true);
+
+    // Note: The game now waits for players to interact (call vote, impostor to guess, or proceed to next round)
   }
 }
 
@@ -369,7 +438,7 @@ function determineWinner(lobbyCode) {
     lobby.canCallVote = false;
     io.to(lobby.imposterId).emit('updateGuessButton', false);
     io.to(lobbyCode).emit('updateVoteButton', false);
-    startClueSubmission(lobbyCode);
+    startNewRound(lobbyCode);
     return;
   }
 
@@ -400,12 +469,13 @@ function determineWinner(lobbyCode) {
     lobby.canCallVote = false;
     io.to(lobby.imposterId).emit('updateGuessButton', false);
     io.to(lobbyCode).emit('updateVoteButton', false);
-    startClueSubmission(lobbyCode);
+    startNewRound(lobbyCode);
     return;
   }
 
   const playerVotedOut = topVotedPlayers[0];
   const imposter = lobby.players[lobby.imposterId];
+  const eliminatedPlayerNickname = lobby.players[playerVotedOut].nickname;
 
   if (playerVotedOut === lobby.imposterId) {
     // Players win
@@ -413,279 +483,352 @@ function determineWinner(lobbyCode) {
       result: `Players win! The Impostor was ${imposter.nickname}.`,
       imposterId: lobby.imposterId,
     });
+    // Clean up the lobby
+    delete lobbies[lobbyCode];
   } else {
-    // Impostor wins
-    io.to(lobbyCode).emit('gameEnded', {
-      result: `Impostor wins! The Impostor was ${imposter.nickname}.`,
-      imposterId: lobby.imposterId,
+    // Remove the voted-out player from the game
+    delete lobby.players[playerVotedOut];
+    io.to(lobbyCode).emit('receiveChatMessage', {
+      message: `${eliminatedPlayerNickname} was eliminated.`,
+      type: 'system',
     });
+    io.to(lobbyCode).emit('updatePlayerList', getPlayersInfo(lobby.players));
+    // Check if game should continue
+    if (Object.keys(lobby.players).length < 3) {
+      // Impostor wins due to insufficient players
+      io.to(lobbyCode).emit('gameEnded', {
+        result: `Impostor wins! The Impostor was ${imposter.nickname}.`,
+        imposterId: lobby.imposterId,
+      });
+      delete lobbies[lobbyCode];
+    } else {
+      // Proceed to next round
+      lobby.currentRound++;
+      lobby.votes = {};
+      lobby.impostorCanGuess = false;
+      lobby.canCallVote = false;
+      io.to(lobby.imposterId).emit('updateGuessButton', false);
+      io.to(lobbyCode).emit('updateVoteButton', false);
+      // Start new round
+      startNewRound(lobbyCode);
+    }
   }
-  // Clean up the lobby
-  delete lobbies[lobbyCode];
+}
+
+function startNewRound(lobbyCode) {
+  const lobby = lobbies[lobbyCode];
+  lobby.currentClueIndex = 0;
+  // Reset clues for all players
+  for (let playerId in lobby.players) {
+    lobby.players[playerId].clues = [];
+  }
+  // Update the clue order in case a player was eliminated
+  lobby.clueOrder = Object.keys(lobby.players);
+  // Notify players of the new round
+  io.to(lobbyCode).emit('newRoundStarted', {
+    currentRound: lobby.currentRound,
+  });
+  // Start clue submission
+  startClueSubmission(lobbyCode);
 }
 
 // Get a random word from the selected category
 function getRandomWord(category) {
   const wordLists = {
-    // ... (your word lists)
-'Video Games': [
-    'Mario',
-    'Zelda',
-    'Minecraft',
-    'Fortnite',
-    'Overwatch',
-    'Pokemon',
-    'Tetris',
-    'Halo',
-    'Sonic',
-    'Pac-Man',
-    'Call of Duty',
-    'League of Legends',
-    'World of Warcraft',
-    'Among Us',
-    'Assassin\'s Creed',
-    'Grand Theft Auto V',
-    'The Last of Us',
-    'Red Dead Redemption',
-    'Final Fantasy',
-    'Metal Gear Solid',
-    'Resident Evil',
-    'Street Fighter',
-    'Mortal Kombat',
-    'Half-Life',
-    'Portal',
-    'StarCraft',
-    'Diablo',
-    'Mass Effect',
-    'Elder Scrolls V: Skyrim',
-    'God of War',
-    'Uncharted',
-    'Animal Crossing',
-    'Fallout',
-    'Super Smash Bros.',
-    'Counter-Strike',
-    'Dota 2',
-    'Battlefield',
-    'Destiny',
-    'Borderlands',
-    'Kingdom Hearts',
-],
-
-'Movies': [
-    'Titanic',
-    'Inception',
-    'Avatar',
-    'Gladiator',
-    'Jaws',
-    'Alien',
-    'Rocky',
-    'Amadeus',
-    'Frozen',
-    'Godfather',
-    'Interstellar',
-    'The Matrix',
-    'Jurassic Park',
-    'The Avengers',
-    'Pulp Fiction',
-    'Star Wars',
-    'Forrest Gump',
-    'The Shawshank Redemption',
-    'The Dark Knight',
-    'Casablanca',
-    'Gone with the Wind',
-    'E.T. the Extra-Terrestrial',
-    'Back to the Future',
-    'The Lord of the Rings',
-    'The Silence of the Lambs',
-    'Schindler\'s List',
-    'Saving Private Ryan',
-    'The Lion King',
-    'Toy Story',
-    'Goodfellas',
-    'The Terminator',
-    'Blade Runner',
-    'Psycho',
-    'A Beautiful Mind',
-    'Braveheart',
-    'The Godfather Part II',
-    'Fight Club',
-    'The Truman Show',
-    'The Departed',
-    'Memento',
-],
-
-'Shows': [
-    'Friends',
-    'Breaking Bad',
-    'Sherlock',
-    'Stranger Things',
-    'Game of Thrones',
-    'The Office',
-    'Simpsons',
-    'Lost',
-    'House',
-    'Dexter',
-    'The Crown',
-    'Westworld',
-    'Mad Men',
-    'The Mandalorian',
-    'Chernobyl',
-    'The Walking Dead',
-    'Seinfeld',
-    'Grey\'s Anatomy',
-    'How I Met Your Mother',
-    'The Big Bang Theory',
-    'Black Mirror',
-    'The Sopranos',
-    'Better Call Saul',
-    'Ozark',
-    'Narcos',
-    'Vikings',
-    'Peaky Blinders',
-    'The Handmaid\'s Tale',
-    'Doctor Who',
-    'Arrested Development',
-    'Rick and Morty',
-    'Brooklyn Nine-Nine',
-    'The Wire',
-    'Suits',
-    'House of Cards',
-    'Modern Family',
-    'Parks and Recreation',
-    'Fargo',
-    'Homeland',
-    'The Witcher',
-],
-
-'Animals': [
-    'Elephant',
-    'Giraffe',
-    'Kangaroo',
-    'Dolphin',
-    'Panda',
-    'Penguin',
-    'Lion',
-    'Tiger',
-    'Zebra',
-    'Koala',
-    'Hippopotamus',
-    'Rhinoceros',
-    'Cheetah',
-    'Chimpanzee',
-    'Alligator',
-    'Bear',
-    'Wolf',
-    'Fox',
-    'Rabbit',
-    'Squirrel',
-    'Ostrich',
-    'Flamingo',
-    'Whale',
-    'Octopus',
-    'Eagle',
-    'Hawk',
-    'Parrot',
-    'Gorilla',
-    'Leopard',
-    'Crocodile',
-    'Bison',
-    'Buffalo',
-    'Camel',
-    'Deer',
-    'Horse',
-    'Moose',
-    'Antelope',
-    'Sloth',
-    'Hedgehog',
-    'Armadillo',
-],
-
-'Foods': [
-    'Pizza',
-    'Sushi',
-    'Burger',
-    'Pasta',
-    'Taco',
-    'Salad',
-    'Chocolate',
-    'Ice Cream',
-    'Steak',
-    'Pancake',
-    'Sandwich',
-    'Soup',
-    'Curry',
-    'Dumplings',
-    'Croissant',
-    'Fried Rice',
-    'Lasagna',
-    'Cheesecake',
-    'Hot Dog',
-    'Barbecue Ribs',
-    'Donut',
-    'Falafel',
-    'Paella',
-    'Kebab',
-    'Bagel',
-    'Nachos',
-    'Gnocchi',
-    'Quiche',
-    'Miso Soup',
-    'Tiramisu',
-    'Apple Pie',
-    'Grilled Cheese',
-    'Omelette',
-    'Burrito',
-    'Samosa',
-    'Sashimi',
-    'Crème Brûlée',
-    'Guacamole',
-    'Macaroni and Cheese',
-    'Poutine',
-],
-
-'Characters': [
-    'Sherlock Holmes',
-    'Harry Potter',
-    'Darth Vader',
-    'Winnie the Pooh',
-    'Spider-Man',
-    'Mickey Mouse',
-    'Batman',
-    'Mario',
-    'James Bond',
-    'Elsa',
-    'Wonder Woman',
-    'Hercules',
-    'Superman',
-    'Lara Croft',
-    'Frodo Baggins',
-    'Captain America',
-    'Iron Man',
-    'Luke Skywalker',
-    'Indiana Jones',
-    'Gandalf',
-    'Katniss Everdeen',
-    'Homer Simpson',
-    'Buzz Lightyear',
-    'Woody',
-    'Shrek',
-    'Donkey Kong',
-    'Princess Peach',
-    'SpongeBob SquarePants',
-    'Optimus Prime',
-    'Goku',
-    'Naruto',
-    'Jon Snow',
-    'Walter White',
-    'Yoda',
-    'Scooby-Doo',
-    'Rick Grimes',
-    'Tony Soprano',
-    'Michael Scott',
-    'Ellen Ripley',
-    'Jack Sparrow',
-],
-
+    'Popular': [
+      'Pizza',
+      'Superman',
+      'Harry Potter',
+      'Batman',
+      'SpongeBob',
+      'Mickey Mouse',
+      'Eiffel Tower',
+      'Coca-Cola',
+      'Facebook',
+      'New York',
+      'Apple',
+      'Football',
+      'Google',
+      'Lion',
+      'Panda',
+      'Chocolate',
+      'Christmas',
+      'Star Wars',
+      'Spider-Man',
+      'McDonald\'s',
+      'Pokemon',
+      'Disney',
+      'Nike',
+      'Simpsons',
+      'The Beatles',
+      'Soccer',
+      'Instagram',
+      'YouTube',
+      'Tesla',
+      'Michael Jackson',
+      'Rock',
+      'Sun',
+      'Moon',
+      'Earth',
+      'Ocean',
+      'Mountain',
+      'River',
+      'Tree',
+      'Dog',
+      'Cat',
+    ],
+    'Video Games': [
+      'Mario',
+      'Zelda',
+      'Minecraft',
+      'Fortnite',
+      'Overwatch',
+      'Pokemon',
+      'Tetris',
+      'Halo',
+      'Sonic',
+      'Pac-Man',
+      'Call of Duty',
+      'League of Legends',
+      'World of Warcraft',
+      'Among Us',
+      'Assassin\'s Creed',
+      'Grand Theft Auto V',
+      'The Last of Us',
+      'Red Dead Redemption',
+      'Final Fantasy',
+      'Metal Gear Solid',
+      'Resident Evil',
+      'Street Fighter',
+      'Mortal Kombat',
+      'Half-Life',
+      'Portal',
+      'StarCraft',
+      'Diablo',
+      'Mass Effect',
+      'Elder Scrolls V: Skyrim',
+      'God of War',
+      'Uncharted',
+      'Animal Crossing',
+      'Fallout',
+      'Super Smash Bros.',
+      'Counter-Strike',
+      'Dota 2',
+      'Battlefield',
+      'Destiny',
+      'Borderlands',
+      'Kingdom Hearts',
+    ],
+    'Movies': [
+      'Titanic',
+      'Inception',
+      'Avatar',
+      'Gladiator',
+      'Jaws',
+      'Alien',
+      'Rocky',
+      'Amadeus',
+      'Frozen',
+      'Godfather',
+      'Interstellar',
+      'The Matrix',
+      'Jurassic Park',
+      'The Avengers',
+      'Pulp Fiction',
+      'Star Wars',
+      'Forrest Gump',
+      'The Shawshank Redemption',
+      'The Dark Knight',
+      'Casablanca',
+      'Gone with the Wind',
+      'E.T. the Extra-Terrestrial',
+      'Back to the Future',
+      'The Lord of the Rings',
+      'The Silence of the Lambs',
+      'Schindler\'s List',
+      'Saving Private Ryan',
+      'The Lion King',
+      'Toy Story',
+      'Goodfellas',
+      'The Terminator',
+      'Blade Runner',
+      'Psycho',
+      'A Beautiful Mind',
+      'Braveheart',
+      'The Godfather Part II',
+      'Fight Club',
+      'The Truman Show',
+      'The Departed',
+      'Memento',
+    ],
+    'Shows': [
+      'Friends',
+      'Breaking Bad',
+      'Sherlock',
+      'Stranger Things',
+      'Game of Thrones',
+      'The Office',
+      'Simpsons',
+      'Lost',
+      'House',
+      'Dexter',
+      'The Crown',
+      'Westworld',
+      'Mad Men',
+      'The Mandalorian',
+      'Chernobyl',
+      'The Walking Dead',
+      'Seinfeld',
+      'Grey\'s Anatomy',
+      'How I Met Your Mother',
+      'The Big Bang Theory',
+      'Black Mirror',
+      'The Sopranos',
+      'Better Call Saul',
+      'Ozark',
+      'Narcos',
+      'Vikings',
+      'Peaky Blinders',
+      'The Handmaid\'s Tale',
+      'Doctor Who',
+      'Arrested Development',
+      'Rick and Morty',
+      'Brooklyn Nine-Nine',
+      'The Wire',
+      'Suits',
+      'House of Cards',
+      'Modern Family',
+      'Parks and Recreation',
+      'Fargo',
+      'Homeland',
+      'The Witcher',
+    ],
+    'Animals': [
+      'Elephant',
+      'Giraffe',
+      'Kangaroo',
+      'Dolphin',
+      'Panda',
+      'Penguin',
+      'Lion',
+      'Tiger',
+      'Zebra',
+      'Koala',
+      'Hippopotamus',
+      'Rhinoceros',
+      'Cheetah',
+      'Chimpanzee',
+      'Alligator',
+      'Bear',
+      'Wolf',
+      'Fox',
+      'Rabbit',
+      'Squirrel',
+      'Ostrich',
+      'Flamingo',
+      'Whale',
+      'Octopus',
+      'Eagle',
+      'Hawk',
+      'Parrot',
+      'Gorilla',
+      'Leopard',
+      'Crocodile',
+      'Bison',
+      'Buffalo',
+      'Camel',
+      'Deer',
+      'Horse',
+      'Moose',
+      'Antelope',
+      'Sloth',
+      'Hedgehog',
+      'Armadillo',
+    ],
+    'Foods': [
+      'Pizza',
+      'Sushi',
+      'Burger',
+      'Pasta',
+      'Taco',
+      'Salad',
+      'Chocolate',
+      'Ice Cream',
+      'Steak',
+      'Pancake',
+      'Sandwich',
+      'Soup',
+      'Curry',
+      'Dumplings',
+      'Croissant',
+      'Fried Rice',
+      'Lasagna',
+      'Cheesecake',
+      'Hot Dog',
+      'Barbecue Ribs',
+      'Donut',
+      'Falafel',
+      'Paella',
+      'Kebab',
+      'Bagel',
+      'Nachos',
+      'Gnocchi',
+      'Quiche',
+      'Miso Soup',
+      'Tiramisu',
+      'Apple Pie',
+      'Grilled Cheese',
+      'Omelette',
+      'Burrito',
+      'Samosa',
+      'Sashimi',
+      'Crème Brûlée',
+      'Guacamole',
+      'Macaroni and Cheese',
+      'Poutine',
+    ],
+    'Characters': [
+      'Sherlock Holmes',
+      'Harry Potter',
+      'Darth Vader',
+      'Winnie the Pooh',
+      'Spider-Man',
+      'Mickey Mouse',
+      'Batman',
+      'Mario',
+      'James Bond',
+      'Elsa',
+      'Wonder Woman',
+      'Hercules',
+      'Superman',
+      'Lara Croft',
+      'Frodo Baggins',
+      'Captain America',
+      'Iron Man',
+      'Luke Skywalker',
+      'Indiana Jones',
+      'Gandalf',
+      'Katniss Everdeen',
+      'Homer Simpson',
+      'Buzz Lightyear',
+      'Woody',
+      'Shrek',
+      'Donkey Kong',
+      'Princess Peach',
+      'SpongeBob SquarePants',
+      'Optimus Prime',
+      'Goku',
+      'Naruto',
+      'Jon Snow',
+      'Walter White',
+      'Yoda',
+      'Scooby-Doo',
+      'Rick Grimes',
+      'Tony Soprano',
+      'Michael Scott',
+      'Ellen Ripley',
+      'Jack Sparrow',
+    ],
   };
 
   let words = wordLists[category];
