@@ -42,12 +42,17 @@
       <div class="modal-content">
         <h2>Select a Category</h2>
         <select id="category-select">
-          <option value="Video Games">Video Games</option>
-          <option value="Movies">Movies</option>
-          <option value="Shows">Shows</option>
-          <option value="Animals">Animals</option>
-          <option value="Foods">Foods</option>
-          <option value="Characters">Characters</option>
+          <optgroup label="Recommended">
+            <option value="Popular">Popular Words</option>
+          </optgroup>
+          <optgroup label="Categories">
+            <option value="Video Games">Video Games</option>
+            <option value="Movies">Movies</option>
+            <option value="Shows">Shows</option>
+            <option value="Animals">Animals</option>
+            <option value="Foods">Foods</option>
+            <option value="Characters">Characters</option>
+          </optgroup>
         </select>
         <button id="confirm-category-btn">Confirm</button>
       </div>
@@ -68,19 +73,29 @@
     </div>
 
     <div id="chat-screen" class="hidden">
-      <h2>Chat</h2>
-      <h3 id="game-category"></h3>
-      <div id="chat-messages"></div>
+      <div id="chat-and-player-container">
+        <div id="chat-container">
+          <h2>Chat</h2>
+          <h3 id="game-category"></h3>
+          <div id="chat-messages"></div>
 
-      <div id="chat-input-area">
-        <input type="text" id="chat-input" placeholder="Type a message...">
-        <button id="send-chat-btn">Send</button>
-      </div>
+          <div id="chat-input-area">
+            <input type="text" id="chat-input" placeholder="Type a message...">
+            <button id="send-chat-btn">Send</button>
+          </div>
 
-      <div id="game-buttons">
-        <button id="call-vote-btn">Call for Vote</button>
-        <button id="view-clues-btn">View Clues</button>
-        <button id="guess-word-btn" class="hidden">Guess Secret Word</button>
+          <div id="game-buttons">
+            <button id="call-vote-btn">Call for Vote</button>
+            <button id="view-clues-btn">View Clues</button>
+            <button id="guess-word-btn" class="hidden">Guess Secret Word</button>
+            <button id="proceed-next-round-btn">Proceed to Next Round</button>
+          </div>
+        </div>
+
+        <div id="player-list-container">
+          <h2>Players</h2>
+          <ul id="player-list"></ul>
+        </div>
       </div>
     </div>
 
