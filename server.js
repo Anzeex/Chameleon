@@ -378,18 +378,41 @@ function startClueSubmission(lobbyCode) {
   promptNextPlayerForClue(lobbyCode);
 }
 
+function shuffleArray(array) {
+  for (let i = array.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [array[i], array[j]] = [array[j], array[i]];
+  }
+  return array;
+}
+
 function promptNextPlayerForClue(lobbyCode) {
   const lobby = lobbies[lobbyCode];
+  
+  // Check if this is the first round and we haven't shuffled the clue order yet
+  if (!lobby.clueOrder || lobby.clueOrder.length === 0) {
+    // Initialize clue order with all player IDs
+    lobby.clueOrder = Object.keys(lobby.players);
+    
+    // Shuffle the clue order only once
+    lobby.clueOrder = shuffleArray(lobby.clueOrder);
+  }
+
   if (lobby.currentClueIndex < lobby.clueOrder.length) {
     const currentPlayerId = lobby.clueOrder[lobby.currentClueIndex];
     const currentPlayer = lobby.players[currentPlayerId];
+
     // Notify all players that this player is submitting a clue
     io.to(lobbyCode).emit('playerSubmittingClue', {
       playerId: currentPlayerId,
       nickname: currentPlayer.nickname,
     });
+
     // Prompt the current player to submit a clue
     io.to(currentPlayerId).emit('promptClueSubmission');
+
+    // Increment the clue index for the next round
+    lobby.currentClueIndex++;
   } else {
     // All players have submitted clues for this round
     lobby.currentClueIndex = 0; // Reset for next round
@@ -404,8 +427,6 @@ function promptNextPlayerForClue(lobbyCode) {
 
     // Enable proceed to next round button
     io.to(lobbyCode).emit('enableProceedButton', true);
-
-    // Note: The game now waits for players to interact (call vote, impostor to guess, or proceed to next round)
   }
 }
 
@@ -546,8 +567,8 @@ function getRandomWord(category) {
   'Drake',
   'Ariana Grande',
   'Rihanna',
-  'Cristiano Ronaldo',
-  'Lionel Messi',
+  'Ronaldo',
+  'Messi',
   'LeBron James',
   'Elon Musk',
   'Bill Gates',
@@ -657,7 +678,7 @@ function getRandomWord(category) {
   'Super Bowl',
   'Tour de France',
   'LeBron James',
-  'Cristiano Ronaldo',
+  'Ronaldo',
   'Usain Bolt',
   'Michael Phelps',
   'Tiger Woods',
@@ -687,28 +708,21 @@ function getRandomWord(category) {
       'Grand Theft Auto V',
       'The Last of Us',
       'Red Dead Redemption',
-      'Final Fantasy',
-      'Metal Gear Solid',
       'Resident Evil',
       'Street Fighter',
       'Mortal Kombat',
       'Half-Life',
       'Portal',
-      'StarCraft',
-      'Diablo',
-      'Mass Effect',
       'Elder Scrolls V: Skyrim',
       'God of War',
       'Uncharted',
       'Animal Crossing',
-      'Fallout',
+      'Fallout 4',
+      'Fallout 76',
       'Super Smash Bros.',
-      'Counter-Strike',
+      'Counter-Strike GO',
       'Dota 2',
-      'Battlefield',
-      'Destiny',
-      'Borderlands',
-      'Kingdom Hearts',
+      'Battlefield 5',
     ],
     'Movies': [
       'Titanic',
@@ -716,9 +730,7 @@ function getRandomWord(category) {
       'Avatar',
       'Gladiator',
       'Jaws',
-      'Alien',
       'Rocky',
-      'Amadeus',
       'Frozen',
       'Godfather',
       'Interstellar',
@@ -729,28 +741,18 @@ function getRandomWord(category) {
       'Star Wars',
       'Forrest Gump',
       'The Shawshank Redemption',
-      'The Dark Knight',
-      'Casablanca',
-      'Gone with the Wind',
-      'E.T. the Extra-Terrestrial',
+      'E.T',
       'Back to the Future',
       'The Lord of the Rings',
-      'The Silence of the Lambs',
       'Schindler\'s List',
       'Saving Private Ryan',
       'The Lion King',
       'Toy Story',
-      'Goodfellas',
       'The Terminator',
       'Blade Runner',
       'Psycho',
-      'A Beautiful Mind',
-      'Braveheart',
-      'The Godfather Part II',
       'Fight Club',
       'The Truman Show',
-      'The Departed',
-      'Memento',
     ],
     'Shows': [
       'Friends',
@@ -770,28 +772,19 @@ function getRandomWord(category) {
       'Chernobyl',
       'The Walking Dead',
       'Seinfeld',
-      'Grey\'s Anatomy',
       'How I Met Your Mother',
       'The Big Bang Theory',
       'Black Mirror',
-      'The Sopranos',
       'Better Call Saul',
-      'Ozark',
       'Narcos',
       'Vikings',
       'Peaky Blinders',
-      'The Handmaid\'s Tale',
-      'Doctor Who',
-      'Arrested Development',
       'Rick and Morty',
       'Brooklyn Nine-Nine',
       'The Wire',
       'Suits',
       'House of Cards',
       'Modern Family',
-      'Parks and Recreation',
-      'Fargo',
-      'Homeland',
       'The Witcher',
     ],
     'Animals': [
@@ -890,11 +883,9 @@ function getRandomWord(category) {
       'Russia',
       'Mexico',
       'Japan',
-      'Ethiopia',
       'Philippines',
       'Egypt',
       'Vietnam',
-      'DR Congo',
       'Turkey',
       'Iran',
       'Germany',
@@ -903,28 +894,21 @@ function getRandomWord(category) {
       'France',
       'Italy',
       'South Africa',
-      'Tanzania',
       'Myanmar',
       'South Korea',
       'Colombia',
-      'Kenya',
       'Spain',
       'Argentina',
       'Uganda',
       'Ukraine',
-      'Sudan',
       'Iraq',
       'Poland',
       'Canada',
       'Morocco',
       'Saudi Arabia',
-      'Uzbekistan',
       'Peru',
       'Afghanistan',
       'Malaysia',
-      'Angola',
-      'Ghana',
-      'Mozambique',
       'Yemen',
       'Nepal',
       'Venezuela',
@@ -932,13 +916,9 @@ function getRandomWord(category) {
       'North Korea',
       'Australia',
       'Ivory Coast',
-      'Cameroon',
-      'Niger',
       'Sri Lanka',
-      'Burkina Faso',
       'Mali',
       'Romania',
-      'Malawi',
       'Chile',
       'Kazakhstan',
       'Zambia',
@@ -948,14 +928,8 @@ function getRandomWord(category) {
       'Netherlands',
       'Senegal',
       'Cambodia',
-      'Chad',
       'Somalia',
-      'Zimbabwe',
       'Guinea',
-      'Rwanda',
-      'Benin',
-      'Burundi',
-      'Tunisia',
       'Bolivia',
       'Belgium',
       'Haiti',
@@ -974,14 +948,17 @@ function getRandomWord(category) {
       'Tajikistan',
       'Belarus',
       'Austria',
-      'Papua New Guinea',
       'Serbia',
       'Israel',
       'Switzerland',
-      'Togo',
       'Sierra Leone',
       'Hong Kong',
       'Laos',
+      'Finland',
+      'Norway',
+      'Denmark',
+      'Bulgaria',
+      'Ireland',
     ],
     'Characters': [
       'Sherlock Holmes',
